@@ -534,6 +534,7 @@ If the string starts with '# raw', return the string as is."
 (defconst anki-editor-prop-failure-reason "ANKI_FAILURE_REASON")
 (defconst anki-editor-prop-default-note-type "ANKI_DEFAULT_NOTE_TYPE")
 (defconst anki-editor-prop-swap-two-fields "ANKI_SWAP_TWO_FIELDS")
+(defconst anki-editor-prop-map-missing "ANKI_MAP_MISSING")
 (defconst anki-editor-org-tag-regexp "^\\([[:alnum:]_@#%]+\\)+$")
 
 (cl-defstruct anki-editor-note
@@ -707,6 +708,8 @@ see `anki-editor-insert-note' which wraps this function."
      (anki-editor-all-tags))
     ((pred (string= anki-editor-prop-default-note-type))
      (anki-editor-note-types))
+    ((pred (string= anki-editor-prop-map-missing))
+     (list "nil" "one" "two"))
     (_ nil)))
 
 (defun anki-editor-is-valid-org-tag (tag)
@@ -795,6 +798,11 @@ and else from variable `anki-editor-prepend-heading'."
       (org-entry-put nil anki-editor-prop-prepend-heading
                      (symbol-name (not initial-val))))))
 
+(defun anki-editor-entry-map-missing ()
+  (let ((map-missing (org-entry-get-with-inheritance anki-editor-prop-map-missing)))
+    (when map-missing
+      (intern map-missing))))
+
 (defun anki-editor-note-at-point ()
   "Make a note struct from current entry."
   (let* ((deck (org-entry-get-with-inheritance anki-editor-prop-deck))
@@ -817,13 +825,15 @@ and else from variable `anki-editor-prepend-heading'."
                            nil anki-editor-prop-swap-two-fields)
                           anki-editor-swap-two-fields))
               1 0))
+         (map-missing (anki-editor-entry-map-missing))
          (fields (anki-editor--map-fields heading
                                           content-before-subheading
                                           subheading-fields
                                           note-type
                                           level
                                           prepend-heading
-                                          field-swap))
+                                          field-swap
+                                          map-missing))
          (exported-fields (mapcar (lambda (x)
                                     (cons
                                      (car x)
@@ -959,7 +969,8 @@ Leading whitespace, drawers, and planning content is skipped."
                                 note-type
                                 level
                                 prepend-heading
-                                field-swap)
+                                field-swap
+                                map-missing)
   "Map `heading', pre-subheading content, and subheadings to fields.
 
 When the `subheading-fields' don't match the `note-type's fields,
@@ -1003,7 +1014,8 @@ Return a list of cons of (FIELD-NAME . FIELD-CONTENT)."
      (cond ((equal 0 (length fields-missing))
             (when (< 0 (length fields-extra))
               (user-error "Failed to map all named fields")))
-           ((equal 1 (length fields-missing))
+           ((or (equal 1 (length fields-missing))
+                (eq map-missing 'one))
             (push (cons (car fields-missing)
                         (if (and (not has-content) (not has-extra))
                             heading
@@ -1016,7 +1028,8 @@ Return a list of cons of (FIELD-NAME . FIELD-CONTENT)."
                              (anki-editor--concat-fields
                               fields-extra subheading-fields level)))))
                   fields))
-           ((equal 2 (length fields-missing))
+           ((or (equal 2 (length fields-missing))
+                (eq map-missing 'two))
             (push (cons (nth field-swap fields-missing)
                         heading)
                   fields)
