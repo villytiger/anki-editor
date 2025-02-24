@@ -66,6 +66,13 @@
   "Customizations for anki-editor."
   :group 'org)
 
+(defcustom anki-editor-always-use-note-id nil
+  "If non-nil, anki-editor notes will be detected using
+`anki-editor-prop-node-id' property where 0 value stands for a new note.
+Otherwise, a mix of `anki-editor-prop-note-type' and
+`anki-editor-prop-note-id' will be used."
+  :type 'boolean)
+
 (defcustom anki-editor-break-consecutive-braces-in-latex nil
   "If non-nil, automatically separate consecutive `}' in latex by spaces.
 This prevents early closing of cloze."
@@ -294,7 +301,7 @@ request directly, it simply queues the request."
 (defun anki-editor-api--note (note)
   "Convert NOTE to the form that AnkiConnect accepts."
   (list
-   :id (string-to-number (or (anki-editor-note-id note) "0"))
+   :id (anki-editor-note-id note)
    :deckName (anki-editor-note-deck note)
    :modelName (anki-editor-note-model note)
    :fields (anki-editor-note-fields note)
@@ -634,7 +641,7 @@ see `anki-editor-insert-note' which wraps this function."
 (defun anki-editor--push-note (note)
   "Request AnkiConnect for updating or creating NOTE."
   (cond
-   ((null (anki-editor-note-id note))
+   ((= 0 (anki-editor-note-id note))
     (anki-editor--create-note note))
    (t
     (anki-editor--update-note note))))
@@ -643,7 +650,7 @@ see `anki-editor-insert-note' which wraps this function."
   "Set note-id of anki-editor note at point to ID."
   (unless id
     (error "Note creation failed for unknown reason"))
-  (org-set-property anki-editor-prop-note-id (number-to-string id)))
+  (org-set-property anki-editor-prop-note-id id))
 
 (defun anki-editor--create-note (note)
   "Request AnkiConnect for creating NOTE."
@@ -661,8 +668,7 @@ see `anki-editor-insert-note' which wraps this function."
   (let* ((oldnote (caar (anki-editor-api-with-multi
                          (anki-editor-api-enqueue
                           'notesInfo
-                          :notes (list (string-to-number
-                                        (anki-editor-note-id note))))
+                          :notes (list (anki-editor-note-id note)))
                          (anki-editor-api-enqueue
                           'updateNoteFields
                           :note (anki-editor-api--note note)))))
@@ -681,13 +687,11 @@ see `anki-editor-insert-note' which wraps this function."
 
      (when tagsadd
        (anki-editor-api-enqueue 'addTags
-                                :notes (list (string-to-number
-                                              (anki-editor-note-id note)))
+                                :notes (list (anki-editor-note-id note))
                                 :tags (mapconcat #'identity tagsadd " ")))
      (when tagsdel
        (anki-editor-api-enqueue 'removeTags
-                                :notes (list (string-to-number
-                                              (anki-editor-note-id note)))
+                                :notes (list (anki-editor-note-id note))
                                 :tags (mapconcat #'identity tagsdel " "))))))
 
 (defun anki-editor--set-failure-reason (reason)
@@ -816,7 +820,7 @@ and else from variable `anki-editor-prepend-heading'."
   (let* ((deck (org-entry-get-with-inheritance anki-editor-prop-deck))
          (format (anki-editor-entry-format))
          (prepend-heading (anki-editor-prepend-heading))
-         (note-id (org-entry-get nil anki-editor-prop-note-id))
+         (note-id (string-to-number (org-entry-get nil anki-editor-prop-note-id)))
          (note-type (or (org-entry-get nil anki-editor-prop-note-type)
                         anki-editor-default-note-type))
          (tags (cl-set-difference (anki-editor--get-tags)
@@ -1243,7 +1247,10 @@ subtree associated with the first heading that has one."
 (defun anki-editor-push-new-notes (&optional scope)
   "Push note entries without ANKI_NOTE_ID in SCOPE to Anki."
   (interactive)
-  (anki-editor-push-notes scope (concat anki-editor-prop-note-id "=\"\"")))
+  (anki-editor-push-notes
+   scope
+   (concat anki-editor-prop-note-id
+           (if anki-editor-allways-use-note-id ">0" "=\"\"")))
 
 (defun anki-editor-retry-failed-notes (&optional scope)
   "Retry pushing notes marked as failed.
@@ -1264,7 +1271,7 @@ With PREFIX also delete it from Org."
                         (string-to-number
                          (org-entry-get nil anki-editor-prop-note-id))
                       (user-error "No note to delete found")))
-      (if (not note-id)
+      (if (= 0 note-id)
           (if prefix
               (message "Note at point is not in Anki (no note-id)")
             (user-error "Note at point is not in Anki (no note-id)"))
@@ -1438,11 +1445,13 @@ When called interactively, it will try to set QUERY to current
 note or deck."
   (interactive
    (list
-    (pcase (org-entry-get-with-inheritance anki-editor-prop-note-id)
-      ((and (pred stringp) nid) (format "nid:%s" nid))
-      (_ (format "deck:%s"
-                 (or (org-entry-get-with-inheritance anki-editor-prop-deck)
-                     "current"))))))
+    (if-let* ((note-id (org-entry-get-with-inheritance anki-editor-prop-note-id))
+              ((stringp note-id))
+              ((not (< 0 (string-to-number note-id)))))
+        (format "nid:%s" note-id)
+      (format "deck:%s"
+              (or (org-entry-get-with-inheritance anki-editor-prop-deck)
+                  "current"))))
   (anki-editor-api-call 'guiBrowse :query (or query ""))
   (when anki-editor-gui-browse-ensure-foreground
     (anki-editor-api-call 'guiBrowse :query (or query ""))))
